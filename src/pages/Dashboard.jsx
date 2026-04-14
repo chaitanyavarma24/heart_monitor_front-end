@@ -15,17 +15,19 @@ function HeartOrb({ live, size = 148 }) {
       <div style={{
         position:"absolute", inset:-32, borderRadius:"40% 40% 48% 48%",
         background:"radial-gradient(ellipse, rgba(192,132,252,0.22) 0%, rgba(147,51,234,0.1) 50%, transparent 72%)",
-        animation:"pulseGlow 2.4s ease-in-out infinite",
-        animationPlayState: live ? "running" : "paused"
+        // animation:"pulseGlow 2.4s ease-in-out infinite",
+        // animationPlayState: live ? "running" : "paused"
       }} />
       <svg
-        width={size} height={h}
+        width={size} height={300}
         viewBox="0 0 100 90"
         style={{
           filter:
             "drop-shadow(0 0 16px rgba(232,121,249,0.65))" +
             " drop-shadow(0 0 48px rgba(147,51,234,0.4))",
-          overflow: "visible", position: "relative", zIndex: 1
+          overflow: "visible", position: "relative", zIndex: 1,
+          animation:"pulseGlow 2.4s ease-in-out infinite",
+        animationPlayState: live ? "running" : "paused"
         }}
       >
         <defs>
@@ -94,6 +96,13 @@ function VitalMini({ label, value, unit, sub }) {
 /* ─────────────────────────────────────────────
    MAIN DASHBOARD
 ───────────────────────────────────────────── */
+let prev = {
+  heart_rate: 72,
+  hrv: 55,
+  spo2: 98,
+  temperature: 36.6,
+  steps: 0
+};
 export default function Dashboard() {
   const { showAlert } = useAlert();
 
@@ -151,15 +160,55 @@ export default function Dashboard() {
   /* ── Simulation toggle ── */
   const sendReading = async () => {
     try {
+
+      const smooth = (value, min, max, maxStep) => {
+        let change = (Math.random() - 0.5) * maxStep;
+        let newVal = value + change;
+        return Math.max(min, Math.min(max, newVal));
+      };
+
+      const smallSpike = (value, min, max, chance = 0.03, intensity = 10) => {
+        if (Math.random() < chance) {
+          let spike = (Math.random() - 0.5) * intensity;
+          let newVal = value + spike;
+          return Math.max(min, Math.min(max, newVal));
+        }
+        return value;
+      };
+
+      // heart rate → smooth + rare small spike
+      prev.heart_rate = smallSpike(
+        smooth(prev.heart_rate, 60, 100, 3),
+        50, 120
+      );
+
+      // HRV → slightly more variation but still smooth
+      prev.hrv = smallSpike(
+        smooth(prev.hrv, 30, 80, 4),
+        20, 100
+      );
+
+      // SpO2 → very stable, almost flat
+      prev.spo2 = smooth(prev.spo2, 95, 100, 0.5);
+
+      // temperature → extremely stable
+      prev.temperature = smooth(prev.temperature, 36.1, 37.2, 0.1);
+
+      // steps → always increasing slowly
+      prev.steps += Math.floor(Math.random() * 4); // 0–3 steps
+
       await API.post("/sensor/", {
-        heart_rate:  100  + Math.random() * 60,
-        hrv:         70  + Math.random() * 50,
-        spo2:        94  + Math.random() * 6,
-        temperature: 45  + Math.random() * 1.8,
-        steps:       Math.floor(Math.random() * 1000),
-        timestamp:   new Date().toISOString()
+        heart_rate: Math.round(prev.heart_rate),
+        hrv: Math.round(prev.hrv),
+        spo2: Math.round(prev.spo2),
+        temperature: prev.temperature.toFixed(1),
+        steps: prev.steps,
+        timestamp: new Date().toISOString()
       });
-    } catch (e) { showAlert(e.response?.data?.detail || "Simulation failed", "error"); }
+
+    } catch (e) {
+      showAlert(e.response?.data?.detail || "Simulation failed", "error");
+    }
   };
 
   const toggleSimulation = () => {
@@ -360,16 +409,39 @@ export default function Dashboard() {
             </div>
           ) : (
             <div style={{ display:"flex", flexDirection:"column", gap:16, marginTop:20 }}>
+              
               <div style={{
                 padding:"16px 20px", borderRadius:14, textAlign:"center",
-                background: prediction.risk==="High" ? "rgba(248,113,113,0.1)" : "rgba(52,211,153,0.1)",
-                border:`1px solid ${prediction.risk==="High" ? "rgba(248,113,113,0.3)" : "rgba(52,211,153,0.3)"}`
+                background: prediction.risk==="High"
+                  ? "rgba(248,113,113,0.1)"
+                  : prediction.risk==="Moderate"
+                  ? "rgba(251,191,36,0.1)"
+                  : "rgba(52,211,153,0.1)",
+                border:`1px solid ${
+                  prediction.risk==="High"
+                    ? "rgba(248,113,113,0.3)"
+                    : prediction.risk==="Moderate"
+                    ? "rgba(251,191,36,0.3)"
+                    : "rgba(52,211,153,0.3)"
+                }`
               }}>
-                <p style={{ margin:0, fontSize:22, fontWeight:700, color: prediction.risk==="High" ? "#f87171" : "#34d399" }}>
-                  {prediction.risk==="High" ? "⚠️ High Risk" : "✓ Low Risk"}
+                <p style={{ margin:0, fontSize:22, fontWeight:700, color:
+                  prediction.risk==="High" ? "#f87171"
+                  : prediction.risk==="Moderate" ? "#fbbf24"
+                  : "#34d399"
+                }}>
+                  {prediction.risk==="High"
+                    ? "⚠️ High Risk"
+                    : prediction.risk==="Moderate"
+                    ? "⚡ Moderate Risk"
+                    : "✓ Low Risk"}
                 </p>
                 <p style={{ margin:"4px 0 0", fontSize:12, color:"#64748b" }}>
-                  {prediction.risk==="High" ? "Consult a cardiologist soon" : "Continue healthy habits"}
+                  {prediction.risk==="High"
+                    ? "Consult a cardiologist soon"
+                    : prediction.risk==="Moderate"
+                    ? "Monitor your vitals regularly"
+                    : "Continue healthy habits"}
                 </p>
               </div>
 
@@ -385,6 +457,8 @@ export default function Dashboard() {
                     width:`${prediction.probability * 100}%`,
                     background: prediction.risk==="High"
                       ? "linear-gradient(90deg,#818cf8,#f87171)"
+                      : prediction.risk==="Moderate"
+                      ? "linear-gradient(90deg,#818cf8,#fbbf24)"
                       : "linear-gradient(90deg,#818cf8,#34d399)"
                   }} />
                 </div>
