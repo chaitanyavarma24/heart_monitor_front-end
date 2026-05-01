@@ -131,18 +131,27 @@ export default function Dashboard() {
     }).catch(() => {});
   }, []);
 
-  // Poll sensor data every 1.5 s
+  // POLLING — always running at 5 s so IoT data is always picked up.
+  // Speeds up to 1.5 s while simulation is active for smooth UI updates.
   useEffect(() => {
+    const interval = simulating ? 1500 : 2000; // match ESP32's 2 s post interval
+
     const poll = async () => {
       try {
         const res = await API.get("/sensor/latest");
-        if (res.data && Object.keys(res.data).length > 0) { setSensor(res.data); setIsLive(true); }
+        if (res.data && Object.keys(res.data).length > 0) {
+          setSensor(res.data);
+          setIsLive(true);
+        } else {
+          setIsLive(false);
+        }
       } catch { setIsLive(false); }
     };
-    poll();
-    pollRef.current = setInterval(poll, 1500);
+
+    poll(); // immediate fetch on mount / mode change
+    pollRef.current = setInterval(poll, interval);
     return () => clearInterval(pollRef.current);
-  }, []);
+  }, [simulating]);
 
   // Live IST clock — ticks every second
   useEffect(() => {
@@ -256,6 +265,10 @@ export default function Dashboard() {
   const spo2Danger = d && d.spo2 < 94;
   const tmpWarning = d && (d.temperature > 37.8 || d.temperature < 36.0);
 
+  // Finger removed: last IoT reading is >12 s old — ESP32 has stopped posting
+  const fingerRemoved = sensor?.source === "iot" && sensor?.timestamp &&
+    (Date.now() - new Date(sensor.timestamp).getTime()) > 12000;
+
   /* ── Alert generation (threshold + backend) ── */
   const alerts = [];
   if (d) {
@@ -304,12 +317,40 @@ export default function Dashboard() {
             </div>
 
             <div style={{ marginTop:"auto" }}>
-              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
+              <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:8 }}>
                 <span className={`live-dot ${isLive ? "active" : "inactive"}`} />
                 <span style={{ fontSize:12, color: isLive ? "#34d399" : "#475569" }}>
                   {isLive ? `Live · ${clockTime}` : "Waiting for data"}
                 </span>
               </div>
+
+              {/* Source badge — shows where the latest reading came from */}
+              {sensor && (
+                <div style={{ marginBottom:10 }}>
+                  <span style={{
+                    display:"inline-flex", alignItems:"center", gap:5,
+                    fontSize:11, fontWeight:600, padding:"3px 10px",
+                    borderRadius:20,
+                    background: fingerRemoved
+                      ? "rgba(251,191,36,0.15)"
+                      : sensor.source === "iot"
+                        ? "rgba(52,211,153,0.15)" : "rgba(147,51,234,0.15)",
+                    color: fingerRemoved ? "#fbbf24"
+                      : sensor.source === "iot" ? "#34d399" : "#c084fc",
+                    border: `1px solid ${
+                      fingerRemoved ? "rgba(251,191,36,0.3)"
+                      : sensor.source === "iot" ? "rgba(52,211,153,0.3)" : "rgba(147,51,234,0.3)"
+                    }`,
+                  }}>
+                    {fingerRemoved
+                      ? "☝️ Place finger on sensor"
+                      : sensor.source === "iot"
+                        ? "🔌 Live IoT Device"
+                        : "⚡ Simulated Data"}
+                  </span>
+                </div>
+              )}
+
               <button
                 style={{ ...S.simBtn, ...(simulating ? S.simBtnActive : {}) }}
                 onClick={toggleSimulation}
